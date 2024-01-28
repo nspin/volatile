@@ -1,10 +1,8 @@
-use core::{
-    marker::PhantomData,
-    ptr::{self, NonNull},
-};
+use core::{marker::PhantomData, ptr::NonNull};
 
 use crate::{
     access::{Access, ReadOnly, ReadWrite, Readable, Writable, WriteOnly},
+    ops::{Ops, UnitaryOps},
     VolatilePtr,
 };
 
@@ -50,16 +48,32 @@ where
         unsafe { Self::new_generic(pointer) }
     }
 
-    pub(super) const unsafe fn new_generic<A>(pointer: NonNull<T>) -> VolatilePtr<'a, T, A> {
+    #[allow(missing_docs)]
+    pub const unsafe fn new_restricted_with_ops<A, O>(
+        access: A,
+        ops: O,
+        pointer: NonNull<T>,
+    ) -> VolatilePtr<'a, T, A>
+    where
+        A: Access,
+        O: Ops,
+    {
+        let _ = access;
+        let _ = ops;
+        unsafe { Self::new_generic(pointer) }
+    }
+
+    pub(crate) const unsafe fn new_generic<A, O>(pointer: NonNull<T>) -> VolatilePtr<'a, T, A, O> {
         VolatilePtr {
             pointer,
             reference: PhantomData,
             access: PhantomData,
+            ops: PhantomData,
         }
     }
 }
 
-impl<'a, T, A> VolatilePtr<'a, T, A>
+impl<'a, T, A, O> VolatilePtr<'a, T, A, O>
 where
     T: ?Sized,
 {
@@ -86,8 +100,9 @@ where
     where
         T: Copy,
         A: Readable,
+        O: UnitaryOps<T>,
     {
-        unsafe { ptr::read_volatile(self.pointer.as_ptr()) }
+        unsafe { O::read(self.pointer.as_ptr()) }
     }
 
     /// Performs a volatile write, setting the contained value to the given `value`.
@@ -112,8 +127,9 @@ where
     where
         T: Copy,
         A: Writable,
+        O: UnitaryOps<T>,
     {
-        unsafe { ptr::write_volatile(self.pointer.as_ptr(), value) };
+        unsafe { O::write(self.pointer.as_ptr(), value) };
     }
 
     /// Updates the contained value using the given closure and volatile instructions.
@@ -136,6 +152,7 @@ where
     where
         T: Copy,
         A: Readable + Writable,
+        O: UnitaryOps<T>,
         F: FnOnce(T) -> T,
     {
         let new = f(self.read());
@@ -204,18 +221,19 @@ where
     /// ## Safety
     ///
     /// The pointer returned by `f` must satisfy the requirements of [`Self::new`].
-    pub unsafe fn map<F, U>(self, f: F) -> VolatilePtr<'a, U, A>
+    pub unsafe fn map<F, U>(self, f: F) -> VolatilePtr<'a, U, A, O>
     where
         F: FnOnce(NonNull<T>) -> NonNull<U>,
         A: Access,
+        O: Ops,
         U: ?Sized,
     {
-        unsafe { VolatilePtr::new_restricted(A::default(), f(self.pointer)) }
+        unsafe { VolatilePtr::new_generic::<A, O>(f(self.pointer)) }
     }
 }
 
 /// Methods for restricting access.
-impl<'a, T> VolatilePtr<'a, T, ReadWrite>
+impl<'a, T, O> VolatilePtr<'a, T, ReadWrite, O>
 where
     T: ?Sized,
 {
@@ -234,8 +252,8 @@ where
     /// assert_eq!(read_only.read(), -4);
     /// // read_only.write(10); // compile-time error
     /// ```
-    pub fn read_only(self) -> VolatilePtr<'a, T, ReadOnly> {
-        unsafe { VolatilePtr::new_restricted(ReadOnly, self.pointer) }
+    pub fn read_only(self) -> VolatilePtr<'a, T, ReadOnly, O> {
+        unsafe { VolatilePtr::new_generic::<ReadOnly, O>(self.pointer) }
     }
 
     /// Restricts access permissions to write-only.
@@ -257,7 +275,7 @@ where
     /// field_2.write(14);
     /// // field_2.read(); // compile-time error
     /// ```
-    pub fn write_only(self) -> VolatilePtr<'a, T, WriteOnly> {
-        unsafe { VolatilePtr::new_restricted(WriteOnly, self.pointer) }
+    pub fn write_only(self) -> VolatilePtr<'a, T, WriteOnly, O> {
+        unsafe { VolatilePtr::new_generic::<WriteOnly, O>(self.pointer) }
     }
 }

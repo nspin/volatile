@@ -1,5 +1,4 @@
 use core::{
-    intrinsics,
     ops::{Range, RangeBounds},
     ptr::{self, NonNull},
     slice::{range, SliceIndex},
@@ -7,10 +6,11 @@ use core::{
 
 use crate::{
     access::{Access, Readable, Writable},
+    ops::{BulkOps, Ops},
     VolatilePtr,
 };
 
-impl<'a, T, A> VolatilePtr<'a, [T], A> {
+impl<'a, T, A, O> VolatilePtr<'a, [T], A, O> {
     /// Returns the length of the slice.
     pub fn len(self) -> usize {
         self.pointer.len()
@@ -55,10 +55,11 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     /// let subslice = volatile.index(1..);
     /// assert_eq!(subslice.index(0).read(), 2);
     /// ```
-    pub fn index<I>(self, index: I) -> VolatilePtr<'a, <I as SliceIndex<[T]>>::Output, A>
+    pub fn index<I>(self, index: I) -> VolatilePtr<'a, <I as SliceIndex<[T]>>::Output, A, O>
     where
         I: SliceIndex<[T]> + SliceIndex<[()]> + Clone,
         A: Access,
+        O: Ops,
     {
         bounds_check(self.pointer.len(), index.clone());
 
@@ -66,9 +67,10 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     }
 
     /// Returns an iterator over the slice.
-    pub fn iter(self) -> impl Iterator<Item = VolatilePtr<'a, T, A>>
+    pub fn iter(self) -> impl Iterator<Item = VolatilePtr<'a, T, A, O>>
     where
         A: Access,
+        O: Ops,
     {
         let ptr = self.as_raw_ptr().as_ptr() as *mut T;
         let len = self.len();
@@ -113,6 +115,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     where
         T: Copy,
         A: Readable,
+        O: BulkOps<T>,
     {
         let len = self.pointer.len();
         assert_eq!(
@@ -121,11 +124,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
             "destination and source slices have different lengths"
         );
         unsafe {
-            intrinsics::volatile_copy_nonoverlapping_memory(
-                dst.as_mut_ptr(),
-                self.pointer.as_mut_ptr(),
-                len,
-            );
+            O::memcpy(dst.as_mut_ptr(), self.pointer.as_mut_ptr(), len);
         }
     }
 
@@ -168,6 +167,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     where
         T: Copy,
         A: Writable,
+        O: BulkOps<T>,
     {
         let len = self.pointer.len();
         assert_eq!(
@@ -176,11 +176,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
             "destination and source slices have different lengths"
         );
         unsafe {
-            intrinsics::volatile_copy_nonoverlapping_memory(
-                self.pointer.as_mut_ptr(),
-                src.as_ptr(),
-                len,
-            );
+            O::memcpy(self.pointer.as_mut_ptr(), src.as_ptr(), len);
         }
     }
 
@@ -221,6 +217,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     where
         T: Copy,
         A: Readable + Writable,
+        O: BulkOps<T>,
     {
         let len = self.pointer.len();
         // implementation taken from https://github.com/rust-lang/rust/blob/683d1bcd405727fcc9209f64845bd3b9104878b8/library/core/src/slice/mod.rs#L2726-L2738
@@ -233,7 +230,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
         // SAFETY: the conditions for `volatile_copy_memory` have all been checked above,
         // as have those for `ptr::add`.
         unsafe {
-            intrinsics::volatile_copy_memory(
+            O::memmove(
                 self.pointer.as_mut_ptr().add(dest),
                 self.pointer.as_mut_ptr().add(src_start),
                 count,
@@ -251,7 +248,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     ///
     /// Panics if `mid > len`.
     ///
-    pub fn split_at(self, mid: usize) -> (VolatilePtr<'a, [T], A>, VolatilePtr<'a, [T], A>)
+    pub fn split_at(self, mid: usize) -> (VolatilePtr<'a, [T], A, O>, VolatilePtr<'a, [T], A, O>)
     where
         A: Access,
     {
@@ -264,7 +261,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     unsafe fn split_at_unchecked(
         self,
         mid: usize,
-    ) -> (VolatilePtr<'a, [T], A>, VolatilePtr<'a, [T], A>)
+    ) -> (VolatilePtr<'a, [T], A, O>, VolatilePtr<'a, [T], A, O>)
     where
         A: Access,
     {
@@ -287,9 +284,10 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     #[allow(clippy::type_complexity)]
     pub fn as_chunks<const N: usize>(
         self,
-    ) -> (VolatilePtr<'a, [[T; N]], A>, VolatilePtr<'a, [T], A>)
+    ) -> (VolatilePtr<'a, [[T; N]], A, O>, VolatilePtr<'a, [T], A, O>)
     where
         A: Access,
+        O: Ops,
     {
         assert_ne!(N, 0);
         let len = self.pointer.len() / N;
@@ -308,9 +306,10 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
     /// This may only be called when
     /// - The slice splits exactly into `N`-element chunks (aka `self.len() % N == 0`).
     /// - `N != 0`.
-    pub unsafe fn as_chunks_unchecked<const N: usize>(self) -> VolatilePtr<'a, [[T; N]], A>
+    pub unsafe fn as_chunks_unchecked<const N: usize>(self) -> VolatilePtr<'a, [[T; N]], A, O>
     where
         A: Access,
+        O: Ops,
     {
         debug_assert_ne!(N, 0);
         debug_assert_eq!(self.pointer.len() % N, 0);
@@ -329,7 +328,7 @@ impl<'a, T, A> VolatilePtr<'a, [T], A> {
 }
 
 /// Methods for volatile byte slices
-impl<A> VolatilePtr<'_, [u8], A> {
+impl<A, O> VolatilePtr<'_, [u8], A, O> {
     /// Sets all elements of the byte slice to the given `value` using a volatile `memset`.
     ///
     /// This method is similar to the `slice::fill` method of the standard library, with the
@@ -354,9 +353,10 @@ impl<A> VolatilePtr<'_, [u8], A> {
     pub fn fill(self, value: u8)
     where
         A: Writable,
+        O: BulkOps<u8>,
     {
         unsafe {
-            intrinsics::volatile_set_memory(self.pointer.as_mut_ptr(), value, self.pointer.len());
+            O::memset(self.pointer.as_mut_ptr(), value, self.pointer.len());
         }
     }
 }
@@ -365,7 +365,7 @@ impl<A> VolatilePtr<'_, [u8], A> {
 ///
 /// These methods are only available with the `unstable` feature enabled (requires a nightly
 /// Rust compiler).
-impl<'a, T, A, const N: usize> VolatilePtr<'a, [T; N], A> {
+impl<'a, T, A, O, const N: usize> VolatilePtr<'a, [T; N], A, O> {
     /// Converts an array pointer to a slice pointer.
     ///
     /// This makes it possible to use the methods defined on slices.
@@ -389,9 +389,10 @@ impl<'a, T, A, const N: usize> VolatilePtr<'a, [T; N], A> {
     ///
     /// assert_eq!(dst, [1, 2]);
     /// ```
-    pub fn as_slice(self) -> VolatilePtr<'a, [T], A>
+    pub fn as_slice(self) -> VolatilePtr<'a, [T], A, O>
     where
         A: Access,
+        O: Ops,
     {
         unsafe {
             self.map(|array| {

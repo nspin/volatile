@@ -1,5 +1,6 @@
 use crate::{
     access::{Access, Copyable, ReadOnly, ReadWrite, WriteOnly},
+    ops::{Ops, VolatileOps},
     volatile_ptr::VolatilePtr,
 };
 use core::{fmt, marker::PhantomData, ptr::NonNull};
@@ -23,13 +24,14 @@ use core::{fmt, marker::PhantomData, ptr::NonNull};
 ///
 /// The size of this struct is the same as the size of the contained reference.
 #[repr(transparent)]
-pub struct VolatileRef<'a, T, A = ReadWrite>
+pub struct VolatileRef<'a, T, A = ReadWrite, O = VolatileOps>
 where
     T: ?Sized,
 {
     pointer: NonNull<T>,
     reference: PhantomData<&'a T>,
     access: PhantomData<A>,
+    ops: PhantomData<O>,
 }
 
 /// Constructor functions.
@@ -90,6 +92,21 @@ where
         unsafe { Self::new_generic(pointer) }
     }
 
+    #[allow(missing_docs)]
+    pub const unsafe fn new_restricted_with_ops<A, O>(
+        access: A,
+        ops: O,
+        pointer: NonNull<T>,
+    ) -> VolatileRef<'a, T, A, O>
+    where
+        A: Access,
+        O: Ops,
+    {
+        let _ = access;
+        let _ = ops;
+        unsafe { Self::new_generic(pointer) }
+    }
+
     /// Creates a `VolatileRef` from the given shared reference.
     ///
     /// **Note:** This function is only intended for testing, not for accessing real volatile
@@ -118,37 +135,38 @@ where
         unsafe { VolatileRef::new(reference.into()) }
     }
 
-    const unsafe fn new_generic<A>(pointer: NonNull<T>) -> VolatileRef<'a, T, A> {
+    const unsafe fn new_generic<A, O>(pointer: NonNull<T>) -> VolatileRef<'a, T, A, O> {
         VolatileRef {
             pointer,
             reference: PhantomData,
             access: PhantomData,
+            ops: PhantomData,
         }
     }
 }
 
-impl<'a, T, A> VolatileRef<'a, T, A>
+impl<'a, T, A, O> VolatileRef<'a, T, A, O>
 where
     T: ?Sized,
 {
     /// Borrows this `VolatileRef` as a read-only [`VolatilePtr`].
     ///
     /// Use this method to do (partial) volatile reads of the referenced data.
-    pub fn as_ptr(&self) -> VolatilePtr<'_, T, A::RestrictShared>
+    pub fn as_ptr(&self) -> VolatilePtr<'_, T, A::RestrictShared, O>
     where
         A: Access,
     {
-        unsafe { VolatilePtr::new_restricted(Default::default(), self.pointer) }
+        unsafe { VolatilePtr::new_generic(self.pointer) }
     }
 
     /// Borrows this `VolatileRef` as a mutable [`VolatilePtr`].
     ///
     /// Use this method to do (partial) volatile reads or writes of the referenced data.
-    pub fn as_mut_ptr(&mut self) -> VolatilePtr<'_, T, A>
+    pub fn as_mut_ptr(&mut self) -> VolatilePtr<'_, T, A, O>
     where
         A: Access,
     {
-        unsafe { VolatilePtr::new_restricted(Default::default(), self.pointer) }
+        unsafe { VolatilePtr::new_generic(self.pointer) }
     }
 
     /// Converts this `VolatileRef` into a [`VolatilePtr`] with full access without shortening
@@ -213,31 +231,34 @@ where
     }
 }
 
-impl<'a, T, A> Clone for VolatileRef<'a, T, A>
+impl<'a, T, A, O> Clone for VolatileRef<'a, T, A, O>
 where
     T: ?Sized,
     A: Access + Copyable,
+    O: Ops,
 {
     fn clone(&self) -> Self {
         Self {
             pointer: self.pointer,
             reference: self.reference,
             access: self.access,
+            ops: self.ops,
         }
     }
 }
 
-impl<'a, T, A> Copy for VolatileRef<'a, T, A>
+impl<'a, T, A, O> Copy for VolatileRef<'a, T, A, O>
 where
     T: ?Sized,
     A: Access + Copyable,
+    O: Ops,
 {
 }
 
-unsafe impl<T, A> Send for VolatileRef<'_, T, A> where T: Sync {}
-unsafe impl<T, A> Sync for VolatileRef<'_, T, A> where T: Sync {}
+unsafe impl<T, A, O> Send for VolatileRef<'_, T, A, O> where T: Sync {}
+unsafe impl<T, A, O> Sync for VolatileRef<'_, T, A, O> where T: Sync {}
 
-impl<T, A> fmt::Debug for VolatileRef<'_, T, A>
+impl<T, A, O> fmt::Debug for VolatileRef<'_, T, A, O>
 where
     T: Copy + fmt::Debug + ?Sized,
 {

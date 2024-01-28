@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use crate::VolatilePtr;
 
-impl<'a, T, A> VolatilePtr<'a, T, A>
+impl<'a, T, A, O> VolatilePtr<'a, T, A, O>
 where
     T: ?Sized,
 {
@@ -14,7 +14,7 @@ where
     /// ## Safety
     ///
     /// The safety requirements of [`Self::map`] apply to this method too.
-    pub const unsafe fn map_const<F, U>(self, f: F) -> VolatilePtr<'a, U, A>
+    pub const unsafe fn map_const<F, U>(self, f: F) -> VolatilePtr<'a, U, A, O>
     where
         F: ~const FnOnce(NonNull<T>) -> NonNull<U>,
         U: ?Sized,
@@ -25,12 +25,12 @@ where
 
 /// Methods for volatile slices
 #[cfg(feature = "unstable")]
-impl<'a, T, A> VolatilePtr<'a, [T], A> {
+impl<'a, T, A, O> VolatilePtr<'a, [T], A, O> {
     /// Compile-time evaluable variant of [`Self::index`].
     ///
     /// This function is a copy of [`Self::index`] that uses unstable compiler functions
     /// to be callable from `const` contexts.
-    pub const fn index_const(self, index: usize) -> VolatilePtr<'a, T, A> {
+    pub const fn index_const(self, index: usize) -> VolatilePtr<'a, T, A, O> {
         assert!(index < self.pointer.len(), "index out of bounds");
 
         struct Mapper {

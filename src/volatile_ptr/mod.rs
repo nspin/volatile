@@ -1,6 +1,6 @@
 use core::{fmt, marker::PhantomData, ptr::NonNull};
 
-use crate::access::ReadWrite;
+use crate::{access::ReadWrite, ops::VolatileOps};
 
 mod macros;
 mod operations;
@@ -25,18 +25,19 @@ mod very_unstable;
 ///
 /// The size of this struct is the same as the size of the contained reference.
 #[repr(transparent)]
-pub struct VolatilePtr<'a, T, A = ReadWrite>
+pub struct VolatilePtr<'a, T, A = ReadWrite, O = VolatileOps>
 where
     T: ?Sized,
 {
     pointer: NonNull<T>,
     reference: PhantomData<&'a T>,
     access: PhantomData<A>,
+    ops: PhantomData<O>,
 }
 
-impl<'a, T, A> Copy for VolatilePtr<'a, T, A> where T: ?Sized {}
+impl<'a, T, A, O> Copy for VolatilePtr<'a, T, A, O> where T: ?Sized {}
 
-impl<T, A> Clone for VolatilePtr<'_, T, A>
+impl<T, A, O> Clone for VolatilePtr<'_, T, A, O>
 where
     T: ?Sized,
 {
@@ -45,7 +46,7 @@ where
     }
 }
 
-impl<T, A> fmt::Debug for VolatilePtr<'_, T, A>
+impl<T, A, O> fmt::Debug for VolatilePtr<'_, T, A, O>
 where
     T: Copy + fmt::Debug + ?Sized,
 {
